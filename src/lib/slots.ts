@@ -1,5 +1,8 @@
 // Slot generation: given a service, a date, the studio's availability rules and
 // existing bookings, work out which start times are still bookable.
+//
+// MULTI-TENANT: every query is scoped to the service's own studio, so capacity
+// and availability are always computed within one studio's data only.
 
 import { prisma } from "./prisma";
 import { dateAndMinutesToUtc, dayOfWeekForDate, formatTime } from "./time";
@@ -14,27 +17,32 @@ export type Slot = {
 };
 
 // Build the list of available slots for a service on a given YYYY-MM-DD date.
+// The service must belong to `studioId` (defends against cross-tenant access).
 export async function getAvailableSlots(
+  studioId: string,
   serviceId: string,
   dateStr: string,
 ): Promise<Slot[]> {
-  const service = await prisma.service.findUnique({ where: { id: serviceId } });
+  const service = await prisma.service.findFirst({
+    where: { id: serviceId, studioId },
+  });
   if (!service || !service.active) return [];
 
   const dow = dayOfWeekForDate(dateStr);
   const rules = await prisma.availabilityRule.findMany({
-    where: { dayOfWeek: dow },
+    where: { studioId, dayOfWeek: dow },
     orderBy: { startMinutes: "asc" },
   });
   if (rules.length === 0) return [];
 
-  // Count existing non-cancelled bookings on this day, keyed by start instant.
-  // Capacity is "how many people can book the same slot" across the studio, so
-  // we count every active booking that starts at the same time.
+  // Count existing non-cancelled bookings on this day for THIS studio, keyed by
+  // start instant. Capacity is "how many people can book the same slot" across
+  // the studio, so we count every active booking that starts at the same time.
   const dayStart = dateAndMinutesToUtc(dateStr, 0);
   const dayEnd = dateAndMinutesToUtc(dateStr, 24 * 60);
   const bookings = await prisma.booking.findMany({
     where: {
+      studioId,
       startTime: { gte: dayStart, lt: dayEnd },
       status: { in: ["PENDING", "CONFIRMED"] },
     },
@@ -86,11 +94,12 @@ export async function getAvailableSlots(
 // Re-check that a specific slot is still bookable (used at booking time to
 // avoid races / double-booking). Returns true when there is still capacity.
 export async function slotIsAvailable(
+  studioId: string,
   serviceId: string,
   startIso: string,
 ): Promise<boolean> {
   const start = new Date(startIso);
   const dateStr = start.toISOString().slice(0, 10);
-  const slots = await getAvailableSlots(serviceId, dateStr);
+  const slots = await getAvailableSlots(studioId, serviceId, dateStr);
   return slots.some((s) => s.startIso === start.toISOString());
 }

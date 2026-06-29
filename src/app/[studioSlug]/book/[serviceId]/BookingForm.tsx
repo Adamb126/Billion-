@@ -16,9 +16,11 @@ function maxDateStr() {
 }
 
 export function BookingForm({
+  studioSlug,
   serviceId,
   priceLabel,
 }: {
+  studioSlug: string;
   serviceId: string;
   priceLabel: string;
 }) {
@@ -37,7 +39,7 @@ export function BookingForm({
     setLoading(true);
     setSelectedIso(null);
     fetch(
-      `/api/availability?serviceId=${encodeURIComponent(serviceId)}&date=${dateStr}`,
+      `/api/availability?studio=${encodeURIComponent(studioSlug)}&serviceId=${encodeURIComponent(serviceId)}&date=${dateStr}`,
     )
       .then((r) => r.json())
       .then((data) => {
@@ -52,7 +54,7 @@ export function BookingForm({
     return () => {
       cancelled = true;
     };
-  }, [serviceId, dateStr]);
+  }, [studioSlug, serviceId, dateStr]);
 
   return (
     <div className="space-y-6">
@@ -120,6 +122,7 @@ export function BookingForm({
           3. Your details
         </h2>
         <form action={formAction} className="space-y-4">
+          <input type="hidden" name="studioSlug" value={studioSlug} />
           <input type="hidden" name="serviceId" value={serviceId} />
           <input type="hidden" name="startIso" value={selectedIso ?? ""} />
 

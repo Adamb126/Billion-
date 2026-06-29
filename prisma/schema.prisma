@@ -1,5 +1,9 @@
 // Recovery Studio OS — data model (Phase 1: Booking + Payments)
 //
+// MULTI-TENANT: one shared app serves many studios. Every Service,
+// AvailabilityRule and Booking belongs to exactly one Studio (studioId), and
+// all queries are scoped by studio so one studio can never see another's data.
+//
 // To deploy on hosted Postgres instead of local SQLite:
 //   1. change `provider` below to "postgresql"
 //   2. set DATABASE_URL to your Postgres connection string
@@ -14,50 +18,91 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// A tenant: one recovery studio. Each studio has its own public booking URL
+// (yourapp.com/<slug>), its own owner login, and its own Stripe account, so
+// payments land in that studio's Stripe. Adding a studio is a row insert.
+model Studio {
+  id   String @id @default(cuid())
+  // URL segment for the public booking page, e.g. "northside-recovery".
+  slug String @unique
+  name String
+
+  currency String @default("eur")
+
+  // Single owner login for this studio (staff logins can come later).
+  // ownerEmail is stored lower-cased for case-insensitive matching.
+  ownerEmail    String
+  ownerPassword String
+
+  // Per-studio Stripe credentials so each studio's money lands in their own
+  // Stripe account. Null => this studio runs in simulated-payment (demo) mode.
+  stripeSecretKey     String?
+  stripeWebhookSecret String?
+
+  // Optional "from" address for this studio's confirmation emails.
+  emailFrom String?
+
+  createdAt DateTime @default(now())
+
+  services          Service[]
+  availabilityRules AvailabilityRule[]
+  bookings          Booking[]
+}
+
 // A bookable service, e.g. "30-min Cold Plunge — €25".
 model Service {
   id              String    @id @default(cuid())
+  studio          Studio    @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  studioId        String
   name            String
   durationMinutes Int
   priceCents      Int // price in the smallest currency unit (cents)
   active          Boolean   @default(true)
   createdAt       DateTime  @default(now())
   bookings        Booking[]
+
+  @@index([studioId])
 }
 
 // A weekly recurring window when the studio is open for bookings.
 // Times are stored as minutes-from-midnight in the studio's local wall clock.
 model AvailabilityRule {
   id           String   @id @default(cuid())
+  studio       Studio   @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  studioId     String
   dayOfWeek    Int // 0 = Sunday ... 6 = Saturday
   startMinutes Int // e.g. 09:00 -> 540
   endMinutes   Int // e.g. 18:00 -> 1080
   capacity     Int      @default(1) // how many people can book the same slot
   createdAt    DateTime @default(now())
+
+  @@index([studioId])
 }
 
 // A single client booking for a service at a specific time.
 model Booking {
-  id          String        @id @default(cuid())
-  service     Service       @relation(fields: [serviceId], references: [id])
-  serviceId   String
-  clientName  String
-  clientEmail String
-  clientPhone String
-  startTime   DateTime // stored as UTC instant representing studio wall-clock time
-  endTime     DateTime
-  status      BookingStatus @default(PENDING)
-  paymentStatus PaymentStatus @default(UNPAID)
-  amountCents Int
-  currency    String
+  id              String        @id @default(cuid())
+  studio          Studio        @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  studioId        String
+  service         Service       @relation(fields: [serviceId], references: [id])
+  serviceId       String
+  clientName      String
+  clientEmail     String
+  clientPhone     String
+  startTime       DateTime // stored as UTC instant representing studio wall-clock time
+  endTime         DateTime
+  status          BookingStatus @default(PENDING)
+  paymentStatus   PaymentStatus @default(UNPAID)
+  amountCents     Int
+  currency        String
   // Stripe Checkout session id, when a real payment is taken.
   stripeSessionId String?
   // True when the owner created this booking manually (walk-in / phone).
-  createdByOwner  Boolean  @default(false)
-  createdAt   DateTime      @default(now())
+  createdByOwner  Boolean       @default(false)
+  createdAt       DateTime      @default(now())
 
-  @@index([startTime])
-  @@index([status])
+  @@index([studioId, startTime])
+  @@index([studioId, status])
 }
 
 enum BookingStatus {

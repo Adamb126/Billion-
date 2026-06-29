@@ -1,7 +1,6 @@
 // Helpers for displaying and parsing money. Internally everything is stored as
-// integer cents to avoid floating-point rounding errors.
-
-import { env } from "./env";
+// integer cents to avoid floating-point rounding errors. Currency is per-studio
+// and passed in explicitly.
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
   eur: "€",
@@ -9,12 +8,12 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   gbp: "£",
 };
 
-export function currencySymbol(currency: string = env.currency): string {
+export function currencySymbol(currency: string): string {
   return CURRENCY_SYMBOLS[currency.toLowerCase()] ?? currency.toUpperCase() + " ";
 }
 
-// 2500 -> "€25.00"
-export function formatMoney(cents: number, currency: string = env.currency): string {
+// (2500, "eur") -> "€25.00"
+export function formatMoney(cents: number, currency: string): string {
   const amount = (cents / 100).toFixed(2);
   return `${currencySymbol(currency)}${amount}`;
 }

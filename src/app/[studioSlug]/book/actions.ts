@@ -3,12 +3,13 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { env, stripeEnabled } from "@/lib/env";
-import { stripe } from "@/lib/stripe";
+import { env } from "@/lib/env";
+import { getStudioBySlug, getStripeForStudio } from "@/lib/studio";
 import { slotIsAvailable } from "@/lib/slots";
 import { confirmBookingPaid } from "@/lib/bookings";
 
 const BookingInput = z.object({
+  studioSlug: z.string().min(1),
   serviceId: z.string().min(1),
   startIso: z.string().datetime(),
   clientName: z.string().trim().min(1, "Name is required").max(120),
@@ -26,6 +27,7 @@ export async function createBooking(
   formData: FormData,
 ): Promise<BookingActionState> {
   const parsed = BookingInput.safeParse({
+    studioSlug: formData.get("studioSlug"),
     serviceId: formData.get("serviceId"),
     startIso: formData.get("startIso"),
     clientName: formData.get("clientName"),
@@ -38,15 +40,21 @@ export async function createBooking(
   }
   const data = parsed.data;
 
-  const service = await prisma.service.findUnique({
-    where: { id: data.serviceId },
+  const studio = await getStudioBySlug(data.studioSlug);
+  if (!studio) {
+    return { error: "Studio not found." };
+  }
+
+  // Scope the service lookup to this studio (defends against cross-tenant ids).
+  const service = await prisma.service.findFirst({
+    where: { id: data.serviceId, studioId: studio.id },
   });
   if (!service || !service.active) {
     return { error: "That session is no longer available." };
   }
 
   // Guard against double-booking a slot that filled up while the client typed.
-  const available = await slotIsAvailable(data.serviceId, data.startIso);
+  const available = await slotIsAvailable(studio.id, data.serviceId, data.startIso);
   if (!available) {
     return {
       error: "Sorry, that time was just taken. Please pick another slot.",
@@ -58,6 +66,7 @@ export async function createBooking(
 
   const booking = await prisma.booking.create({
     data: {
+      studioId: studio.id,
       serviceId: service.id,
       clientName: data.clientName,
       clientEmail: data.clientEmail,
@@ -65,26 +74,29 @@ export async function createBooking(
       startTime: start,
       endTime: end,
       amountCents: service.priceCents,
-      currency: env.currency,
+      currency: studio.currency,
       status: "PENDING",
       paymentStatus: "UNPAID",
     },
   });
 
-  // --- Simulated-payment mode (no Stripe key configured) --------------------
-  if (!stripeEnabled || !stripe) {
+  const stripe = getStripeForStudio(studio);
+  const base = `${env.appUrl}/${studio.slug}`;
+
+  // --- Simulated-payment mode (studio hasn't configured Stripe) -------------
+  if (!stripe) {
     await confirmBookingPaid(booking.id);
-    redirect(`/booking/success?booking=${booking.id}&simulated=1`);
+    redirect(`${base}/booking/success?booking=${booking.id}&simulated=1`);
   }
 
-  // --- Real Stripe Checkout -------------------------------------------------
+  // --- Real Stripe Checkout (this studio's own Stripe account) --------------
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     line_items: [
       {
         quantity: 1,
         price_data: {
-          currency: env.currency,
+          currency: studio.currency,
           unit_amount: service.priceCents,
           product_data: {
             name: service.name,
@@ -94,9 +106,9 @@ export async function createBooking(
       },
     ],
     customer_email: data.clientEmail,
-    metadata: { bookingId: booking.id },
-    success_url: `${env.appUrl}/booking/success?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${env.appUrl}/booking/cancelled?booking=${booking.id}`,
+    metadata: { bookingId: booking.id, studioId: studio.id },
+    success_url: `${base}/booking/success?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${base}/booking/cancelled?booking=${booking.id}`,
   });
 
   await prisma.booking.update({

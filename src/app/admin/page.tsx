@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getCurrentStudio } from "@/lib/studio";
 import { formatMoney } from "@/lib/money";
 import { formatDate, formatTime, todayDateStr } from "@/lib/time";
 import { cancelBooking, markBookingPaid } from "./actions";
@@ -7,6 +9,9 @@ import { ManualBookingForm } from "./ManualBookingForm";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  const studio = await getCurrentStudio();
+  if (!studio) redirect("/admin/login");
+
   const now = new Date();
   const startOfToday = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
@@ -15,6 +20,7 @@ export default async function DashboardPage() {
   const [upcoming, services, paidTodayAgg] = await Promise.all([
     prisma.booking.findMany({
       where: {
+        studioId: studio.id,
         startTime: { gte: startOfToday },
         status: { in: ["PENDING", "CONFIRMED"] },
       },
@@ -22,13 +28,14 @@ export default async function DashboardPage() {
       orderBy: { startTime: "asc" },
     }),
     prisma.service.findMany({
-      where: { active: true },
+      where: { studioId: studio.id, active: true },
       orderBy: { createdAt: "asc" },
       select: { id: true, name: true },
     }),
     prisma.booking.aggregate({
       _sum: { amountCents: true },
       where: {
+        studioId: studio.id,
         paymentStatus: "PAID",
         startTime: {
           gte: startOfToday,
@@ -58,7 +65,10 @@ export default async function DashboardPage() {
         </div>
         <div className="flex gap-6">
           <Stat label="Upcoming (confirmed)" value={String(confirmedCount)} />
-          <Stat label="Paid today" value={formatMoney(paidToday)} />
+          <Stat
+            label="Paid today"
+            value={formatMoney(paidToday, studio.currency)}
+          />
         </div>
       </div>
 

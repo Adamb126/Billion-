@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { stripe } from "@/lib/stripe";
+import { getStudioBySlug, getStripeForStudio } from "@/lib/studio";
 import { confirmBookingPaid } from "@/lib/bookings";
 import { formatMoney } from "@/lib/money";
 import { formatDateTime } from "@/lib/time";
@@ -8,34 +9,37 @@ import { formatDateTime } from "@/lib/time";
 export const dynamic = "force-dynamic";
 
 export default async function SuccessPage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ studioSlug: string }>;
   searchParams: Promise<{ booking?: string; session_id?: string }>;
 }) {
+  const { studioSlug } = await params;
   const { booking: bookingId, session_id } = await searchParams;
 
-  let booking = bookingId
-    ? await prisma.booking.findUnique({
-        where: { id: bookingId },
-        include: { service: true },
-      })
-    : null;
+  const studio = await getStudioBySlug(studioSlug);
+  if (!studio) notFound();
+
+  let booking =
+    bookingId
+      ? await prisma.booking.findFirst({
+          where: { id: bookingId, studioId: studio.id },
+          include: { service: true },
+        })
+      : null;
 
   // Fallback confirmation: if we came back from a real Stripe Checkout and the
   // webhook hasn't marked the booking paid yet, verify the session here so the
   // client still sees an accurate confirmation.
-  if (
-    booking &&
-    booking.paymentStatus !== "PAID" &&
-    session_id &&
-    stripe
-  ) {
+  const stripe = getStripeForStudio(studio);
+  if (booking && booking.paymentStatus !== "PAID" && session_id && stripe) {
     try {
       const session = await stripe.checkout.sessions.retrieve(session_id);
       if (session.payment_status === "paid") {
         await confirmBookingPaid(booking.id);
-        booking = await prisma.booking.findUnique({
-          where: { id: booking.id },
+        booking = await prisma.booking.findFirst({
+          where: { id: booking.id, studioId: studio.id },
           include: { service: true },
         });
       }
@@ -74,9 +78,7 @@ export default async function SuccessPage({
           </>
         ) : (
           <>
-            <h1 className="text-2xl font-bold text-slate-900">
-              Finishing up…
-            </h1>
+            <h1 className="text-2xl font-bold text-slate-900">Finishing up…</h1>
             <p className="mt-2 text-slate-600">
               Your payment is being confirmed. If you completed payment, your
               booking will appear shortly — check your email for confirmation.
@@ -84,7 +86,7 @@ export default async function SuccessPage({
           </>
         )}
 
-        <Link href="/" className="btn-secondary mt-6 inline-flex">
+        <Link href={`/${studio.slug}`} className="btn-secondary mt-6 inline-flex">
           Back to sessions
         </Link>
       </div>

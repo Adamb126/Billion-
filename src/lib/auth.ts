@@ -1,26 +1,39 @@
 // Owner authentication for the back office.
 //
-// v1 keeps this deliberately simple: a single owner login defined by env vars
-// (OWNER_EMAIL / OWNER_PASSWORD). On success we issue a signed JWT stored in an
-// httpOnly cookie. Staff logins can be layered on later without changing the
-// client-facing flow.
+// MULTI-TENANT: each studio has its own owner login (email + password stored on
+// the Studio row). A successful login issues a signed JWT carrying that
+// studio's id + slug, so every back-office query is scoped to the owner's own
+// studio. Staff logins can be layered on later without changing this flow.
 
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
+import type { Studio } from "@prisma/client";
+import { prisma } from "./prisma";
 import { env } from "./env";
 
 const COOKIE_NAME = "rs_session";
 const secret = new TextEncoder().encode(env.authSecret);
 
-export function credentialsValid(email: string, password: string): boolean {
-  return (
-    email.trim().toLowerCase() === env.ownerEmail.trim().toLowerCase() &&
-    password === env.ownerPassword
-  );
+export type Session = { studioId: string; slug: string };
+
+// Find the studio whose owner credentials match. Returns the studio or null.
+export async function authenticateOwner(
+  email: string,
+  password: string,
+): Promise<Studio | null> {
+  const normalisedEmail = email.trim().toLowerCase();
+  const studio = await prisma.studio.findFirst({
+    where: { ownerEmail: normalisedEmail },
+  });
+  if (!studio) return null;
+  // Plain-password comparison for v1 simplicity (see spec). Swap for a hashed
+  // comparison when staff logins / self-service onboarding arrive.
+  if (studio.ownerPassword !== password) return null;
+  return studio;
 }
 
-export async function createSession(): Promise<void> {
-  const token = await new SignJWT({ role: "owner", email: env.ownerEmail })
+export async function createSession(studio: Studio): Promise<void> {
+  const token = await new SignJWT({ studioId: studio.id, slug: studio.slug })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("30d")
@@ -41,17 +54,27 @@ export async function destroySession(): Promise<void> {
   cookieStore.delete(COOKIE_NAME);
 }
 
-// Returns true when the current request carries a valid owner session.
-export async function isAuthenticated(): Promise<boolean> {
+// The current owner session ({ studioId, slug }) or null if not signed in.
+export async function getSession(): Promise<Session | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
-  if (!token) return false;
+  if (!token) return null;
   try {
-    await jwtVerify(token, secret);
-    return true;
+    const { payload } = await jwtVerify(token, secret);
+    if (
+      typeof payload.studioId === "string" &&
+      typeof payload.slug === "string"
+    ) {
+      return { studioId: payload.studioId, slug: payload.slug };
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function isAuthenticated(): Promise<boolean> {
+  return (await getSession()) !== null;
 }
 
 export const SESSION_COOKIE_NAME = COOKIE_NAME;

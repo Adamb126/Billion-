@@ -1,6 +1,7 @@
 // Shared booking operations used by both the client flow and the Stripe webhook.
 
 import { prisma } from "./prisma";
+import { env } from "./env";
 import { sendBookingConfirmation } from "./email";
 
 // Mark a booking as paid + confirmed and send the confirmation email.
@@ -9,7 +10,7 @@ import { sendBookingConfirmation } from "./email";
 export async function confirmBookingPaid(bookingId: string): Promise<void> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { service: true },
+    include: { service: true, studio: true },
   });
   if (!booking) return;
   if (booking.status === "CONFIRMED" && booking.paymentStatus === "PAID") {
@@ -22,6 +23,8 @@ export async function confirmBookingPaid(bookingId: string): Promise<void> {
   });
 
   await sendBookingConfirmation({
+    studioName: booking.studio.name,
+    studioEmailFrom: booking.studio.emailFrom || env.emailFrom,
     clientName: booking.clientName,
     clientEmail: booking.clientEmail,
     serviceName: booking.service.name,

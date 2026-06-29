@@ -1,11 +1,17 @@
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getCurrentStudio } from "@/lib/studio";
 import { formatMoney, currencySymbol } from "@/lib/money";
 import { createService, toggleService } from "../actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function ServicesPage() {
+  const studio = await getCurrentStudio();
+  if (!studio) redirect("/admin/login");
+
   const services = await prisma.service.findMany({
+    where: { studioId: studio.id },
     orderBy: { createdAt: "asc" },
   });
 
@@ -52,7 +58,7 @@ export default async function ServicesPage() {
             </div>
             <div>
               <label className="label" htmlFor="price">
-                Price ({currencySymbol()})
+                Price ({currencySymbol(studio.currency)})
               </label>
               <input
                 id="price"
@@ -97,7 +103,8 @@ export default async function ServicesPage() {
                     )}
                   </div>
                   <p className="text-sm text-slate-500">
-                    {service.durationMinutes} min · {formatMoney(service.priceCents)}
+                    {service.durationMinutes} min ·{" "}
+                    {formatMoney(service.priceCents, studio.currency)}
                   </p>
                 </div>
                 <form action={toggleService}>

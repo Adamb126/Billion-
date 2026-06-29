@@ -1,11 +1,17 @@
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getCurrentStudio } from "@/lib/studio";
 import { DAY_NAMES, minutesToHHMM } from "@/lib/time";
 import { createAvailabilityRule, deleteAvailabilityRule } from "../actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function AvailabilityPage() {
+  const studio = await getCurrentStudio();
+  if (!studio) redirect("/admin/login");
+
   const rules = await prisma.availabilityRule.findMany({
+    where: { studioId: studio.id },
     orderBy: [{ dayOfWeek: "asc" }, { startMinutes: "asc" }],
   });
 

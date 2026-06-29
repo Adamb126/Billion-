@@ -10,6 +10,29 @@ are intentionally **not** built yet.
 
 ---
 
+## Multi-tenant by design
+
+This is **one shared app that serves many studios**, not a separate site per
+studio. It's built that way from day one so adding studio #2 is a config change,
+not a rebuild.
+
+- **Each studio is a tenant** (a row in the `Studio` table). Every service,
+  availability rule and booking is tagged with its `studioId`, and **every query
+  is scoped by studio**, so one studio can never see another's data.
+- **Each studio has its own booking URL:** `yourapp.com/<studio-slug>`
+  (e.g. `/northside-recovery`). The page reads the slug, finds the studio, and
+  shows only that studio's services and slots.
+- **Each studio has its own owner login and its own Stripe account**, so payments
+  land in that studio's Stripe — not a shared platform account.
+- **One back office at `/admin`**, scoped by who logs in: an owner only ever sees
+  their own studio's data.
+
+Only one studio needs to be live right now; there's no public studio sign-up
+flow yet (a studio is set up manually — see "Adding another studio" below).
+Subdomains and custom domains are deliberately left for later.
+
+---
+
 ## What it does
 
 **Client side (public booking page)**
@@ -60,31 +83,70 @@ npm run setup
 npm run dev
 ```
 
+`npm run setup` seeds the **first studio** from your `.env` (slug `STUDIO_SLUG`).
 Then open:
-- **http://localhost:3000** — the public booking page.
+- **http://localhost:3000/my-studio** — that studio's public booking page
+  (`my-studio` is the default `STUDIO_SLUG`).
 - **http://localhost:3000/admin** — the owner back office
   (log in with `OWNER_EMAIL` / `OWNER_PASSWORD` from `.env`).
+- **http://localhost:3000** — a simple root landing that links to each studio.
 
 ### Demo mode vs. live mode
 
-- **Demo mode (default):** leave `STRIPE_SECRET_KEY` blank. Bookings are
-  confirmed instantly without a real charge, and confirmation emails are printed
-  to the server console. Ideal for trying the flow end-to-end.
-- **Live mode:** fill in `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` and the
-  `SMTP_*` values to take real card payments and send real email.
+Payment mode is **per studio** (each studio has its own Stripe keys):
+
+- **Demo mode (default):** a studio with no `stripeSecretKey` confirms bookings
+  instantly without a real charge, and confirmation emails are printed to the
+  server console. The first studio is seeded with whatever `STRIPE_SECRET_KEY`
+  is in `.env` — leave it blank for demo mode.
+- **Live mode:** give the studio real Stripe keys (seeded from `.env` for the
+  first studio, or set on the `Studio` row) and configure `SMTP_*` to send real
+  email.
 
 ---
 
-## Taking real payments with Stripe
+## Taking real payments with Stripe (per studio)
 
-1. Add your `STRIPE_SECRET_KEY` to `.env`.
-2. Point a Stripe webhook at `POST /api/stripe/webhook` for the
-   `checkout.session.completed` event, and put its signing secret in
-   `STRIPE_WEBHOOK_SECRET`.
-   - Locally: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+Each studio uses **its own Stripe account**, so money lands in the studio's
+account, not a shared one.
+
+1. Put the studio's `STRIPE_SECRET_KEY` on its `Studio` row (seeded from `.env`
+   for the first studio).
+2. In **that studio's Stripe account**, add a webhook for the
+   `checkout.session.completed` event pointing at:
+   ```
+   POST /api/stripe/webhook?studio=<studio-slug>
+   ```
+   The `?studio=` part tells the app which studio's signing secret to verify
+   against. Save the signing secret to the studio's `stripeWebhookSecret`.
+   - Locally: `stripe listen --forward-to "localhost:3000/api/stripe/webhook?studio=my-studio"`
 3. Bookings are created as `PENDING`, the client is sent to Stripe Checkout, and
    the webhook (with a success-page fallback) marks them `PAID` + `CONFIRMED`
    and sends the confirmation email.
+
+---
+
+## Adding another studio
+
+No rebuild and no sign-up flow needed — insert a `Studio` row. For example with
+Prisma Studio (`npm run db:studio`) or a script:
+
+```ts
+await prisma.studio.create({
+  data: {
+    slug: "northside-recovery",      // its booking URL: /northside-recovery
+    name: "Northside Recovery",
+    currency: "eur",
+    ownerEmail: "owner@northside.ie", // lower-case
+    ownerPassword: "their-password",
+    stripeSecretKey: "sk_live_...",   // optional; null => demo mode
+    stripeWebhookSecret: "whsec_...", // optional
+  },
+});
+```
+
+That studio is immediately live at `/northside-recovery`, its owner can log in at
+`/admin`, and its data is fully isolated from every other studio.
 
 ---
 
@@ -112,20 +174,28 @@ See `src/lib/time.ts`. (Revisit if multiple locations / timezones are ever added
 
 ```
 prisma/
-  schema.prisma        # Service, AvailabilityRule, Booking models
-  seed.ts              # sample services + weekly hours
+  schema.prisma          # Studio (tenant), Service, AvailabilityRule, Booking
+  seed.ts                # first studio + its sample services + weekly hours
 src/
-  middleware.ts        # protects /admin
-  lib/                 # env, prisma, auth, stripe, email, money, time, slots
+  middleware.ts          # protects /admin
+  lib/                   # env, prisma, auth, studio, email, money, time, slots,
+                         #   bookings  (studio.ts = tenant resolution + Stripe)
   app/
-    page.tsx           # public: list services
-    book/[serviceId]/  # public: pick slot, enter details, pay
-    booking/success/   # confirmation (with Stripe fallback verify)
-    booking/cancelled/ # releases the slot on abandoned payment
-    api/availability/  # GET slots for a service + date
-    api/stripe/webhook/# Stripe payment confirmation
-    admin/             # login, dashboard, services, availability
+    page.tsx             # root landing (links to each studio)
+    [studioSlug]/
+      page.tsx           # public: that studio's services
+      book/[serviceId]/  # public: pick slot, enter details, pay
+      booking/success/   # confirmation (with Stripe fallback verify)
+      booking/cancelled/ # releases the slot on abandoned payment
+    api/availability/    # GET slots: ?studio=<slug>&serviceId&date
+    api/stripe/webhook/  # per-studio webhook: ?studio=<slug>
+    admin/               # login + dashboard/services/availability, scoped to
+                         #   the logged-in owner's studio
 ```
+
+Every data access in `lib/` and `app/` is scoped by `studioId`, so tenants are
+isolated. See `src/lib/studio.ts` for how the current studio is resolved (by URL
+slug for public pages, by session for the back office).
 
 ---
 

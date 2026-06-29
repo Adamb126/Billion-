@@ -1,15 +1,31 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { env } from "@/lib/env";
-import { stripe } from "@/lib/stripe";
+import { prisma } from "@/lib/prisma";
+import { getStudioBySlug, getStripeForStudio } from "@/lib/studio";
 import { confirmBookingPaid } from "@/lib/bookings";
 
-// Stripe needs the raw request body to verify the webhook signature, so this
-// route reads the body as text (Next App Router gives us the raw body here).
+// Stripe webhook for payment confirmation.
+//
+// MULTI-TENANT: each studio uses its own Stripe account, so each configures a
+// webhook endpoint pointing at:  /api/stripe/webhook?studio=<their-slug>
+// The `studio` query param tells us which studio's signing secret to verify
+// the request against. (The success-page fallback also reconciles payments,
+// so a missing webhook degrades gracefully.)
 export async function POST(request: Request) {
-  if (!stripe || !env.stripeWebhookSecret) {
+  const { searchParams } = new URL(request.url);
+  const studioSlug = searchParams.get("studio");
+  if (!studioSlug) {
     return NextResponse.json(
-      { error: "Stripe is not configured" },
+      { error: "Missing ?studio=<slug> on webhook URL" },
+      { status: 400 },
+    );
+  }
+
+  const studio = await getStudioBySlug(studioSlug);
+  const stripe = studio ? getStripeForStudio(studio) : null;
+  if (!studio || !stripe || !studio.stripeWebhookSecret) {
+    return NextResponse.json(
+      { error: "Stripe is not configured for this studio" },
       { status: 400 },
     );
   }
@@ -26,7 +42,7 @@ export async function POST(request: Request) {
     event = stripe.webhooks.constructEvent(
       rawBody,
       signature,
-      env.stripeWebhookSecret,
+      studio.stripeWebhookSecret,
     );
   } catch (err) {
     console.error("Stripe webhook signature verification failed:", err);
@@ -37,7 +53,14 @@ export async function POST(request: Request) {
     const session = event.data.object as Stripe.Checkout.Session;
     const bookingId = session.metadata?.bookingId;
     if (bookingId && session.payment_status === "paid") {
-      await confirmBookingPaid(bookingId);
+      // Ensure the booking really belongs to this studio before confirming.
+      const booking = await prisma.booking.findFirst({
+        where: { id: bookingId, studioId: studio.id },
+        select: { id: true },
+      });
+      if (booking) {
+        await confirmBookingPaid(booking.id);
+      }
     }
   }
 
