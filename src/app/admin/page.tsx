@@ -31,7 +31,7 @@ export default async function AdminHubPage() {
         <ModuleTile
           title="Accounting"
           description="Revenue reporting and accounting sync."
-          comingSoon
+          href="/admin/accounting"
         />
       </div>
     </main>
