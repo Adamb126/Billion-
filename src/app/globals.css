@@ -37,3 +37,14 @@ body {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
 }
+
+/* When printing an invoice, hide the app chrome and controls so only the
+   invoice document appears on the page / saved PDF. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}

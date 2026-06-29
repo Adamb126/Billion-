@@ -18,7 +18,7 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-white">
+      <header className="no-print border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
           {/* Studio name links back to the hub. */}
           <Link href="/admin" className="font-bold text-brand">

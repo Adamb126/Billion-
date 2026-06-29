@@ -47,6 +47,11 @@ model Studio {
   services          Service[]
   availabilityRules AvailabilityRule[]
   bookings          Booking[]
+  invoices          Invoice[]
+
+  // Optional details printed on this studio's invoices (address, tax/VAT no.).
+  invoiceAddress String?
+  invoiceTaxId   String?
 }
 
 // A bookable service, e.g. "30-min Cold Plunge — €25".
@@ -103,6 +108,45 @@ model Booking {
 
   @@index([studioId, startTime])
   @@index([studioId, status])
+}
+
+// A sales invoice the owner raises for a customer. Totals are computed from the
+// line items (see src/lib/invoices.ts) rather than stored, to avoid drift.
+model Invoice {
+  id              String            @id @default(cuid())
+  studio          Studio            @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  studioId        String
+  number          Int // per-studio sequential invoice number (shown as INV-0001)
+  customerName    String
+  customerEmail   String?
+  customerAddress String?
+  issueDate       DateTime
+  dueDate         DateTime?
+  status          InvoiceStatus     @default(DRAFT)
+  notes           String?
+  currency        String
+  createdAt       DateTime          @default(now())
+  lineItems       InvoiceLineItem[]
+
+  @@unique([studioId, number])
+  @@index([studioId, status])
+}
+
+model InvoiceLineItem {
+  id             String  @id @default(cuid())
+  invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId      String
+  description    String
+  quantity       Float   @default(1)
+  unitPriceCents Int
+  vatRate        Float   @default(0) // VAT percent, e.g. 23 for Ireland's standard rate
+  position       Int     @default(0) // display order
+}
+
+enum InvoiceStatus {
+  DRAFT // being prepared
+  SENT // issued to the customer, awaiting payment
+  PAID // settled
 }
 
 enum BookingStatus {

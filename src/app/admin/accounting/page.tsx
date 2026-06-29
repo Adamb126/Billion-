@@ -1,9 +1,10 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentStudio } from "@/lib/studio";
 import { formatMoney } from "@/lib/money";
 import { formatDate } from "@/lib/time";
+import { computeTotals } from "@/lib/invoices";
+import { AccountingNav } from "./AccountingNav";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,16 @@ export default async function AccountingPage() {
       }),
     ]);
 
+  // Outstanding = unpaid invoices (DRAFT + SENT), totalled from their lines.
+  const openInvoices = await prisma.invoice.findMany({
+    where: { studioId: studio.id, status: { in: ["DRAFT", "SENT"] } },
+    include: { lineItems: true },
+  });
+  const outstandingCents = openInvoices.reduce(
+    (sum, inv) => sum + computeTotals(inv.lineItems).totalCents,
+    0,
+  );
+
   const serviceName = new Map(services.map((s) => [s.id, s.name]));
   const byService = byServiceRaw
     .map((row) => ({
@@ -68,16 +79,10 @@ export default async function AccountingPage() {
 
   return (
     <div className="space-y-8">
+      <AccountingNav active="overview" />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/admin"
-            className="rounded-md px-2 py-1.5 text-sm text-slate-400 hover:text-slate-700"
-          >
-            ← Hub
-          </Link>
-          <h1 className="text-2xl font-bold text-slate-900">Accounting</h1>
-        </div>
+        <h1 className="text-2xl font-bold text-slate-900">Overview</h1>
         <a href="/admin/accounting/export" className="btn-secondary">
           Download CSV
         </a>
@@ -94,6 +99,15 @@ export default async function AccountingPage() {
         <StatCard label="This week" amount={formatMoney(week.sum, cur)} sub={`${week.count} paid`} />
         <StatCard label="This month" amount={formatMoney(month.sum, cur)} sub={`${month.count} paid`} />
         <StatCard label="All time" amount={formatMoney(allTime.sum, cur)} sub={`${allTime.count} paid`} />
+      </div>
+
+      {/* Outstanding invoices */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <StatCard
+          label="Outstanding invoices"
+          amount={formatMoney(outstandingCents, cur)}
+          sub={`${openInvoices.length} unpaid`}
+        />
       </div>
 
       {/* By service */}
