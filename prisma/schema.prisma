@@ -1,0 +1,72 @@
+// Recovery Studio OS — data model (Phase 1: Booking + Payments)
+//
+// To deploy on hosted Postgres instead of local SQLite:
+//   1. change `provider` below to "postgresql"
+//   2. set DATABASE_URL to your Postgres connection string
+//   3. run `npx prisma db push`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A bookable service, e.g. "30-min Cold Plunge — €25".
+model Service {
+  id              String    @id @default(cuid())
+  name            String
+  durationMinutes Int
+  priceCents      Int // price in the smallest currency unit (cents)
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  bookings        Booking[]
+}
+
+// A weekly recurring window when the studio is open for bookings.
+// Times are stored as minutes-from-midnight in the studio's local wall clock.
+model AvailabilityRule {
+  id           String   @id @default(cuid())
+  dayOfWeek    Int // 0 = Sunday ... 6 = Saturday
+  startMinutes Int // e.g. 09:00 -> 540
+  endMinutes   Int // e.g. 18:00 -> 1080
+  capacity     Int      @default(1) // how many people can book the same slot
+  createdAt    DateTime @default(now())
+}
+
+// A single client booking for a service at a specific time.
+model Booking {
+  id          String        @id @default(cuid())
+  service     Service       @relation(fields: [serviceId], references: [id])
+  serviceId   String
+  clientName  String
+  clientEmail String
+  clientPhone String
+  startTime   DateTime // stored as UTC instant representing studio wall-clock time
+  endTime     DateTime
+  status      BookingStatus @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  amountCents Int
+  currency    String
+  // Stripe Checkout session id, when a real payment is taken.
+  stripeSessionId String?
+  // True when the owner created this booking manually (walk-in / phone).
+  createdByOwner  Boolean  @default(false)
+  createdAt   DateTime      @default(now())
+
+  @@index([startTime])
+  @@index([status])
+}
+
+enum BookingStatus {
+  PENDING // awaiting payment
+  CONFIRMED // paid (or owner-confirmed) and on the calendar
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+}
