@@ -4,7 +4,7 @@ import { useActionState, useRef, useEffect, useState } from "react";
 import {
   createManualBooking,
   type ManualBookingState,
-} from "./actions";
+} from "../actions";
 
 type ServiceOption = { id: string; name: string };
 

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentStudio } from "@/lib/studio";
 import { DAY_NAMES, minutesToHHMM } from "@/lib/time";
 import { createAvailabilityRule, deleteAvailabilityRule } from "../actions";
+import { BookingNav } from "../BookingNav";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function AvailabilityPage() {
 
   return (
     <div className="space-y-8">
+      <BookingNav active="availability" studioSlug={studio.slug} />
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Availability</h1>
         <p className="mt-1 text-slate-600">

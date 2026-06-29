@@ -151,7 +151,7 @@ export async function cancelBooking(formData: FormData): Promise<void> {
     where: { id, studioId: studio.id },
     data: { status: "CANCELLED" },
   });
-  revalidatePath("/admin");
+  revalidatePath("/admin/bookings");
 }
 
 // Owner manually adds a booking (walk-in / phone). Marked confirmed and flagged
@@ -219,7 +219,7 @@ export async function createManualBooking(
     },
   });
 
-  revalidatePath("/admin");
+  revalidatePath("/admin/bookings");
   return { ok: true };
 }
 
@@ -231,5 +231,5 @@ export async function markBookingPaid(formData: FormData): Promise<void> {
     where: { id, studioId: studio.id },
     data: { paymentStatus: "PAID", status: "CONFIRMED" },
   });
-  revalidatePath("/admin");
+  revalidatePath("/admin/bookings");
 }

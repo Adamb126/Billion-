@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentStudio } from "@/lib/studio";
 import { formatMoney, currencySymbol } from "@/lib/money";
 import { createService, toggleService } from "../actions";
+import { BookingNav } from "../BookingNav";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function ServicesPage() {
 
   return (
     <div className="space-y-8">
+      <BookingNav active="services" studioSlug={studio.slug} />
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Services</h1>
         <p className="mt-1 text-slate-600">
